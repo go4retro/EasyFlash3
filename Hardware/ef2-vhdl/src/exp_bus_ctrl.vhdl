@@ -131,22 +131,18 @@ entity exp_bus_ctrl is
             ba:                 in std_logic;
             addr:               in std_logic_vector(15 downto 12);
             phi2_cycle_start:   out std_logic;
-            bus_next_state:     out bus_state_type;
-            bus_current_state:  out bus_state_type;
             bus_out_enable:     out std_logic;
             hrdet_next_state:   out hiram_det_state_type;
-            hrdet_current_state: out hiram_det_state_type
+            hrdet_current_state: out hiram_det_state_type;
+            bus_read_start:     out std_logic;
+            bus_wr_start:       out std_logic;
+            bus_we_start:       out std_logic;
+            bus_to_idle:        out std_logic
     );
 end exp_bus_ctrl;
 
 
 architecture exp_bus_ctrl_arc of exp_bus_ctrl is
-
-    -- next state of the bus, detected combinatorically
-    signal bus_next_state_i:        bus_state_type;
-
-    -- current state of the bus
-    signal bus_current_state_i:     bus_state_type;
 
     -- current state of the hiram detection
     signal hrdet_current_state_i:   hiram_det_state_type;
@@ -220,73 +216,58 @@ begin
         end if;
     end process check_phi2_cycle_start;
 
-     
     ---------------------------------------------------------------------------
-    -- Find out which state the expansion port bus will have on the *next*
-    -- clk edge. This is combinatoric logic.
+    -- 
+    --   --                  -- On C128 in Ultimax mode n_wr is don't care
     ---------------------------------------------------------------------------
-    check_next_state : process(clk_cnt, n_wr, bus_current_state_i,
-                               n_io1, n_io2, n_roml, n_romh)
+    check_bus_read_start: process(clk_cnt, n_wr)
     begin
-
-        case bus_current_state_i is
-
-            when BUS_IDLE =>
-                if clk_cnt = x"A" and n_wr = '1' then
-                        bus_next_state_i <= BUS_READ_VALID;
-                elsif clk_cnt = x"C" and n_wr = '0' then
-                        bus_next_state_i <= BUS_WRITE_VALID;
---                elsif clk_cnt = x"4" and (n_roml = '0' or n_romh = '0') then
-  --                  -- On C128 in Ultimax mode n_wr is don't care
-    --                -- when VIC-II reads from Cartridge ROM
-      --              bus_next_state_i <= BUS_READ_VALID;
-                else
-                    bus_next_state_i <= BUS_IDLE;
-                end if;
-
-            when BUS_WRITE_VALID =>
-                bus_next_state_i <= BUS_WRITE_ENABLE;
-
-            when BUS_WRITE_ENABLE =>
-                if clk_cnt = x"F" then
-                    bus_next_state_i <= BUS_IDLE;
-                else
-                    bus_next_state_i <= BUS_WRITE_ENABLE;
-                end if;
-
-            when BUS_READ_VALID =>
-                if clk_cnt = x"C" then
-                    bus_next_state_i <= BUS_READ_COMPLETE;
-                else
-                    bus_next_state_i <= BUS_READ_VALID;
-                end if;
-            
-            when BUS_READ_COMPLETE =>
-                if clk_cnt = x"0" or clk_cnt = x"8" then
-                    bus_next_state_i <= BUS_IDLE;
-                else
-                    bus_next_state_i <= BUS_READ_COMPLETE;
-                end if;
-
-        end case;
-        
-    end process check_next_state;
-
-    bus_next_state <= bus_next_state_i;
-
-    ---------------------------------------------------------------------------
-    -- Make the next state of the expansion port bus to the current state
-    ---------------------------------------------------------------------------
-    enter_next_state: process(clk, n_reset)
-    begin
-        if n_reset = '0' then
-                bus_current_state_i <= BUS_IDLE;
-        elsif rising_edge(clk) then
-            bus_current_state_i <= bus_next_state_i;
+        if clk_cnt = x"C" and n_wr = '1' then
+            bus_read_start <= '1';
+        else
+            bus_read_start <= '0';
         end if;
-    end process enter_next_state;
+    end process check_bus_read_start;
 
-    bus_current_state <= bus_current_state_i;
+
+    ---------------------------------------------------------------------------
+    -- 
+    ---------------------------------------------------------------------------
+    check_bus_wr_start: process(clk_cnt, n_wr)
+    begin
+        if clk_cnt = x"C" and n_wr = '0' then
+            bus_wr_start <= '1';
+        else
+            bus_wr_start <= '0';
+        end if;
+    end process check_bus_wr_start;
+
+    ---------------------------------------------------------------------------
+    -- 
+    ---------------------------------------------------------------------------
+    check_bus_we_start: process(clk_cnt, n_wr)
+    begin
+        if clk_cnt = x"D" and n_wr = '0' then
+            bus_we_start <= '1';
+        else
+            bus_we_start <= '0';
+        end if;
+    end process check_bus_we_start;
+
+    ---------------------------------------------------------------------------
+    -- 
+    ---------------------------------------------------------------------------
+    check_bus_to_idle: process(clk_cnt, n_wr)
+    begin
+        if (clk_cnt = x"F" and n_wr = '0') or 
+           clk_cnt = x"0" or 
+           clk_cnt = x"8" then
+            bus_to_idle <= '1';
+        else
+            bus_to_idle <= '0';
+        end if;
+    end process check_bus_to_idle;
+
 
     ---------------------------------------------------------------------------
     -- Create the output enable signal for the expansion port data bus.

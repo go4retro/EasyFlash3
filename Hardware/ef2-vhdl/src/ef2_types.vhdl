@@ -22,16 +22,6 @@
 
 package ef2_types is
 
-    -- states for the expansion port bus
-    type bus_state_type is 
-    (
-        BUS_IDLE,
-        BUS_WRITE_VALID,
-        BUS_WRITE_ENABLE,
-        BUS_READ_VALID,
-        BUS_READ_COMPLETE
-    );
-
     -- states for the hiram detection
     type hiram_det_state_type is 
     (

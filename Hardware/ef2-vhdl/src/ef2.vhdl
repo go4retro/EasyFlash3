@@ -120,10 +120,10 @@ architecture ef2_arc of ef2 is
     signal select_menu_mode:        std_logic;
 
     -- next state of the bus, detected combinatorically
-    signal bus_next_state:          bus_state_type;
-
-    -- current state of the bus
-    signal bus_current_state:       bus_state_type;
+    signal bus_read_start:          std_logic;
+    signal bus_wr_start:            std_logic;
+    signal bus_we_start:            std_logic;
+    signal bus_to_idle:             std_logic;
 
     -- current state of the hiram detection
     signal hrdet_current_state:     hiram_det_state_type;
@@ -187,11 +187,13 @@ architecture ef2_arc of ef2 is
             ba:         in std_logic;            
             addr:       in std_logic_vector(15 downto 12);
             phi2_cycle_start:   out std_logic;
-            bus_next_state:     out bus_state_type;
-            bus_current_state:  out bus_state_type;
             bus_out_enable:     out std_logic;
             hrdet_next_state:   out hiram_det_state_type;
-            hrdet_current_state: out hiram_det_state_type
+            hrdet_current_state: out hiram_det_state_type;
+            bus_read_start:     out std_logic;
+            bus_wr_start:       out std_logic;
+            bus_we_start:       out std_logic;
+            bus_to_idle:        out std_logic
         );
     end component;
 
@@ -212,8 +214,8 @@ begin
     (
         n_roml, n_romh, n_io1, n_io2, n_wr, n_reset_in, clk, phi2,
         ba, addr(15 downto 12), phi2_cycle_start,
-        bus_next_state, bus_current_state, bus_out_enable,
-        hrdet_next_state, hrdet_current_state
+        bus_out_enable, hrdet_next_state, hrdet_current_state, 
+        bus_read_start, bus_wr_start, bus_we_start, bus_to_idle
     );
 
     ---------------------------------------------------------------------------
@@ -293,13 +295,12 @@ begin
     begin
         if rising_edge(clk) then
             start_reset_from_key <= '0';
-            freezer          <= '0';
-            select_ef_mode   <= '0';
-            select_menu_mode <= '0';
+            freezer             <= '0';
+            select_ef_mode      <= '0';
+            select_menu_mode    <= '0';
 
             if buttons_enabled = '1' then
                 if button_a = '1' then
-                    select_ef_mode <= '1';
                     start_reset_from_key <= '1';
 
                 elsif button_b = '1' then
@@ -307,15 +308,10 @@ begin
                     easyflash_boot <= '1';
                     start_reset_from_key <= '1';
 
---                elsif button_c = '1' then
-  --                  cart_mode <= MODE_KERNAL;
-    --                -- cart_mode <= MODE_FC3;
-      --              start_reset_from_key <= '1';
-
-                elsif button_d = '1' then
+                elsif button_c = '1' then
                     -- This button has a special function depending from mode
                     case cart_mode is
-                        when MODE_EASYFLASH =>
+                        when MODE_EASYFLASH | MODE_MENU =>
                             easyflash_boot <= '0';
                             start_reset_from_key <= '1';
 
@@ -325,6 +321,12 @@ begin
                             end if;
                         when others => null;
                     end case;
+
+--                elsif button_c = '1' then
+  --                  cart_mode <= MODE_KERNAL;
+    --                -- cart_mode <= MODE_FC3;
+      --              start_reset_from_key <= '1';
+
                 end if;
             end if;
         end if;
@@ -385,9 +387,9 @@ begin
         elsif rising_edge(clk) then
 
             case cart_mode is
-                    
+
                 when MODE_EASYFLASH | MODE_MENU =>
-                    if bus_next_state = BUS_WRITE_VALID and 
+                    if bus_wr_start = '1' and 
                           n_io1 = '0' and addr(1) = '1' then
                         -- $de02 (only addr(1) is checked in the original EF)
                         n_exrom <= not data(1);
@@ -421,7 +423,7 @@ begin
                     end case;
 
                 when MODE_FC3 =>
-                    if bus_next_state = BUS_WRITE_VALID and io_dfff_addressed = '1' then
+                    if bus_wr_start = '1' and io_dfff_addressed = '1' then
                         -- $dfff
                         n_exrom <= data(4);
                         n_game  <= data(5);
@@ -447,8 +449,7 @@ begin
             end if;
         elsif rising_edge(clk) then
             if cart_mode = MODE_FC3 then
-                if bus_next_state = BUS_WRITE_VALID and 
-                   io_dfff_addressed = '1' then
+                if bus_wr_start = '1' and io_dfff_addressed = '1' then
                     -- $dfff
                     if data(6) = '0' then
                         n_nmi_i <= '0';
@@ -491,13 +492,13 @@ begin
                     -- ROM or RAM: High address lines will work for both
                     mem_addr(20 downto 8) <= x"44" & addr(12 downto 8);
 
-                elsif bus_next_state = BUS_WRITE_VALID then
+                elsif bus_wr_start = '1' then
                     -- Write accesses always go to RAM, same address as above
                     mem_addr(20 downto 8) <= x"44" & addr(12 downto 8);
                 end if;
 
-            elsif bus_next_state = BUS_READ_VALID or 
-                  bus_next_state = BUS_WRITE_VALID then
+            elsif bus_read_start = '1' or 
+                  bus_wr_start = '1' then
 
                 case cart_mode is
                     when MODE_GEORAM =>
@@ -523,13 +524,13 @@ begin
                         if n_roml = '0' then
                             -- Show current Flash bank at ROML or ROMH
                             mem_addr(20 downto 8) <= 
-                                x"4" & "00" & flash_bank(1 downto 0) & addr(12 downto 8);
+                                "0" & flash_bank & addr(12 downto 8);
                         elsif n_romh = '0' then
                             mem_addr(20 downto 8) <= 
-                                x"c" & "00" & flash_bank(1 downto 0) & addr(12 downto 8);
+                                "1" & flash_bank & addr(12 downto 8);
                         elsif n_io1 = '0' or n_io2 = '0' then
                             mem_addr(20 downto 8) <= 
-                                x"4" & "00" & flash_bank(1 downto 0) & addr(12 downto 8);
+                                "0" & flash_bank & addr(12 downto 8);
                         end if;
 
                     when others => null;
@@ -569,89 +570,83 @@ begin
             case cart_mode is
 
                 when MODE_EASYFLASH | MODE_MENU =>
-                    case bus_next_state is
-                        when BUS_IDLE =>
-                            n_flash_cs  <= '1';
-                            n_ram_cs    <= '1';
-                            n_mem_oe_i  <= '1';
-                            n_mem_wr    <= '1';
+                    if bus_to_idle = '1' then
+                        n_flash_cs  <= '1';
+                        n_ram_cs    <= '1';
+                        n_mem_oe_i  <= '1';
+                        n_mem_wr    <= '1';
 
-                        when BUS_READ_VALID =>
-                            if n_io2 = '0' then
-                                -- Read RAM at $df00
-                                n_ram_cs   <= '0';
-                                n_mem_oe_i <= '0';
-                            elsif n_roml = '0' or n_romh = '0' then
-                                -- Read FLASH at ROML/ROMH
-                                n_flash_cs <= '0';
-                                n_mem_oe_i <= '0';
-                            end if;
+                    elsif bus_wr_start = '1' then
+                        if n_io2 = '0' then
+                            -- Write RAM at $df00
+                            n_ram_cs <= '0';
+                        elsif n_roml = '0' or n_romh = '0' then
+                            -- Write FLASH at ROML/ROMH
+                            n_flash_cs <= '0';
+                        end if;
 
-                        when BUS_WRITE_VALID =>
-                            if n_io2 = '0' then
-                                -- Write RAM at $df00
-                                n_ram_cs <= '0';
-                            elsif n_roml = '0' or n_romh = '0' then
-                                -- Write FLASH at ROML/ROMH
-                                n_flash_cs <= '0';
-                            end if;
+                    elsif bus_we_start = '1' then
+                        if n_io2 = '0' or n_roml = '0' or n_romh = '0' then
+                            -- Write RAM at $df00 or FLASH at ROML/ROMH
+                            n_mem_wr <= '0';
+                        end if;
 
-                        when BUS_WRITE_ENABLE =>
-                            if n_io2 = '0' or n_roml = '0' or n_romh = '0' then
-                                -- Write RAM at $df00 or FLASH at ROML/ROMH
-                                n_mem_wr <= '0';
-                            end if;
+                    elsif bus_read_start = '1' then
+                        if n_io2 = '0' then
+                            -- Read RAM at $df00
+                            n_ram_cs   <= '0';
+                            n_mem_oe_i <= '0';
+                        elsif n_roml = '0' or n_romh = '0' then
+                            -- Read FLASH at ROML/ROMH
+                            n_flash_cs <= '0';
+                            n_mem_oe_i <= '0';
+                        end if;
 
-                        when others => null;
-                    end case;
+                    end if;
 
                 when MODE_GEORAM =>
-                    case bus_next_state is
-                        when BUS_IDLE =>
-                            n_flash_cs  <= '1';
-                            n_ram_cs    <= '1';
-                            n_mem_oe_i  <= '1';
-                            n_mem_wr    <= '1';
+                    if bus_to_idle = '1' then
+                        n_flash_cs  <= '1';
+                        n_ram_cs    <= '1';
+                        n_mem_oe_i  <= '1';
+                        n_mem_wr    <= '1';
 
-                        when BUS_READ_VALID =>
-                            if n_io1 = '0' then
-                                -- Read RAM at $de00
-                                n_ram_cs   <= '0';
-                                n_mem_oe_i <= '0';
-                            end if;
+                    elsif bus_wr_start = '1' then
+                        if n_io1 = '0' then
+                            -- Write RAM at $de00
+                            n_ram_cs <= '0';
+                        end if;
 
-                        when BUS_WRITE_VALID =>
-                            if n_io1 = '0' then
-                                -- Write RAM at $de00
-                                n_ram_cs <= '0';
-                            end if;
+                    elsif bus_we_start = '1' then
+                        if n_io1 = '0' then
+                            -- Write RAM at $de00
+                            n_mem_wr <= '0';
+                        end if;
 
-                        when BUS_WRITE_ENABLE =>
-                            if n_io1 = '0' then
-                                -- Write RAM at $de00
-                                n_mem_wr <= '0';
-                            end if;
+                    elsif bus_read_start = '1' then
+                        if n_io1 = '0' then
+                            -- Read RAM at $de00
+                            n_ram_cs   <= '0';
+                            n_mem_oe_i <= '0';
+                        end if;
 
-                        when others => null;
-                    end case;
+                    end if;
 
                 when MODE_FC3 =>
-                    case bus_next_state is
-                        when BUS_IDLE =>
-                            n_flash_cs  <= '1';
-                            n_ram_cs    <= '1';
-                            n_mem_oe_i  <= '1';
-                            n_mem_wr    <= '1';
+                    if bus_to_idle = '1' then
+                        n_flash_cs  <= '1';
+                        n_ram_cs    <= '1';
+                        n_mem_oe_i  <= '1';
+                        n_mem_wr    <= '1';
 
-                        when BUS_READ_VALID =>
-                            if cart_addressed = '1' then
-                                -- Read FLASH at ROML/ROMH/IO1/IO2
-                                n_flash_cs <= '0';
-                                n_mem_oe_i <= '0';
-                            end if;
+                    elsif bus_read_start = '1' then
+                        if cart_addressed = '1' then
+                            -- Read FLASH at ROML/ROMH/IO1/IO2
+                            n_flash_cs <= '0';
+                            n_mem_oe_i <= '0';
+                        end if;
 
-                        when others => null;
-                    end case;
+                    end if;
 
                 when MODE_KERNAL =>
                     -- read kernal at 0xe000..0xffff
@@ -668,25 +663,22 @@ begin
                         end if;
                         n_mem_oe_i <= '0';
                     else
-                        case bus_next_state is
-                            when BUS_IDLE =>
-                                n_flash_cs  <= '1';
-                                n_ram_cs    <= '1';
-                                n_mem_oe_i  <= '1';
-                                n_mem_wr    <= '1';
+                        if bus_to_idle = '1' then
+                            n_flash_cs  <= '1';
+                            n_ram_cs    <= '1';
+                            n_mem_oe_i  <= '1';
+                            n_mem_wr    <= '1';
 
-                            when BUS_WRITE_VALID =>
-                                if kernal_space_cpu_write = '1' then
-                                    n_ram_cs <= '0';
-                                end if;
-    
-                            when BUS_WRITE_ENABLE =>
-                                if kernal_space_cpu_write = '1' then
-                                    n_mem_wr <= '0';
-                                end if;
+                        elsif bus_wr_start = '1' then
+                            if kernal_space_cpu_write = '1' then
+                                n_ram_cs <= '0';
+                            end if;
 
-                            when others => null;
-                        end case;
+                        elsif bus_we_start = '1' then
+                            if kernal_space_cpu_write = '1' then
+                                n_mem_wr <= '0';
+                            end if;
+                        end if;
                     end if;
 
                 when others => null;
@@ -711,7 +703,7 @@ begin
         if n_reset_in = '0' then
             ram_bank <= (others => '0');
         elsif rising_edge(clk) then
-            if bus_next_state = BUS_WRITE_VALID then
+            if bus_wr_start = '1' then
                 case cart_mode is
                     when MODE_GEORAM =>
                         if n_io2 = '0' then
@@ -737,18 +729,27 @@ begin
     -- In EasyFlash mode:
     --     $de00 select flash bank 8 KiB block (i.e. bits 19 downto 13)
     ---------------------------------------------------------------------------
-    set_flash_bank: process(clk, n_reset_in)
+    set_flash_bank: process(clk, n_reset_in, cart_mode)
     begin
-        if n_reset_in = '0' then
-            if cart_mode = MODE_MENU then
-                flash_bank <= "1111011"; -- x"7b"
-            else
-                flash_bank <= (others => '0');
-            end if;
-        elsif rising_edge(clk) then
-            if bus_next_state = BUS_WRITE_VALID then
+        if rising_edge(clk) then
+            if n_reset_in = '0' then
                 case cart_mode is
-                    when MODE_EASYFLASH =>
+                    when MODE_MENU =>
+                        flash_bank <= "1111011"; -- x"7b"
+
+                    when MODE_FC3 =>
+                        flash_bank(1 downto 0) <= "00";
+
+                    when MODE_KERNAL =>
+                        null;
+
+                    when others =>
+                        flash_bank <= (others => '0');
+                end case;
+            
+            elsif bus_wr_start = '1' then
+                case cart_mode is
+                    when MODE_EASYFLASH | MODE_MENU =>
                         -- $de00 (only addr(1) is checked in the original EF)
                         if n_io1 = '0' and addr(1) = '0' then
                             flash_bank(6 downto 0) <= data(6 downto 0);
@@ -779,7 +780,7 @@ begin
             elsif select_ef_mode = '1' then
                 cart_mode <= MODE_EASYFLASH;
 
-            elsif bus_next_state = BUS_WRITE_VALID and 
+            elsif bus_wr_start = '1' and 
                   cart_mode = MODE_MENU then
                 -- $de03
                 if n_io1 = '0' and addr(7 downto 0) = x"03" then
@@ -793,8 +794,11 @@ begin
                             start_reset_from_sw <= '1';
 
                         when "010" =>
-                        
                             cart_mode <= MODE_GEORAM;
+                            start_reset_from_sw <= '1';
+
+                        when "011" =>
+                            cart_mode <= MODE_KERNAL;
                             start_reset_from_sw <= '1';
 
                         when others => null;
